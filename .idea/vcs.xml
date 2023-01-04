@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/Predictive-Maintenance-using-LSTM" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lstms_for_predictive_maintenance" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/lstms_for_predictive_maintenance/Predictive-Maintenance-using-LSTM" vcs="Git" />
