@@ -1,96 +1,64 @@
+import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
 import tensorflow as tf
-from keras.layers import CategoryEncoding, Normalization
-from tensorflow import keras
-from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
 
-print("The relevant libraries have been imported.")
+# read training data
+train_df = pd.read_csv('Predictive-Maintenance-using-LSTM/Dataset/PM_train.txt', sep=" ", header=None)
+train_df.drop(train_df.columns[[26, 27]], axis=1, inplace=True)
+train_df.columns = ['id', 'cycle', 'setting1', 'setting2', 'setting3', 's1', 's2', 's3',
+                    's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14',
+                    's15', 's16', 's17', 's18', 's19', 's20', 's21']
 
-# Load the dataset
-dataframe = pd.read_csv("mill.csv")
+train_df = train_df.sort_values(['id', 'cycle'])
 
-# Split the data into training and validation sets
-val_dataframe = dataframe.sample(frac=0.01, random_state=1337)
-train_dataframe = dataframe.drop(val_dataframe.index)
+# read ground truth data
+truth_df = pd.read_csv('Predictive-Maintenance-using-LSTM/Dataset/PM_truth.txt', sep=" ", header=None)
+truth_df.drop(truth_df.columns[[1]], axis=1, inplace=True)
 
-print(f"Using {len(train_dataframe)} samples for training and {len(val_dataframe)} for validation")
+# Data Labeling - generate column RUL (Remaining Usefull Life or Time to Failure)
+rul = pd.DataFrame(train_df.groupby('id')['cycle'].max()).reset_index()
+rul.columns = ['id', 'max']
+train_df = train_df.merge(rul, on=['id'], how='left')
+train_df['RUL'] = train_df['max'] - train_df['cycle']
+train_df.drop('max', axis=1, inplace=True)
 
+# generate label columns for training data
+w1 = 30
+w0 = 15
+train_df['label1'] = np.where(train_df['RUL'] <= w1, 1, 0)
+train_df['label2'] = train_df['label1']
+train_df.loc[train_df['RUL'] <= w0, 'label2'] = 2
 
-# Convert the dataframes to datasets
-def dataframe_to_dataset(dataframe):
-    dataframe = dataframe.copy()
-    labels = dataframe.pop("VB")
-    dataset = tf.data.Dataset.from_tensor_slices((dict(dataframe), labels))
-    dataset = dataset.shuffle(buffer_size=len(dataframe))
-    return dataset
+# pick a subset of columns to use as features
+feature_cols = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15', 's16',
+                's17', 's18', 's19', 's20', 's21']
 
+# create feature and label arrays
+X = train_df[feature_cols].values
+y = train_df['label1'].values
 
-train_ds = dataframe_to_dataset(train_dataframe)
-val_ds = dataframe_to_dataset(val_dataframe)
+# Split the data into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
-# Print a sample from the training dataset
-for x, y in train_ds.take(1):
-    print("Input:", x)
-    print("Target:", y)
+# Define the model architecture
+model = Sequential()
+model.add(Dense(100, input_dim=21, activation='relu'))
+model.add(Dense(100, activation='relu'))
+model.add(Dense(100, activation='relu'))
+model.add(Dense(1, activation='sigmoid'))
 
-# Batch the datasets
-train_ds = train_ds.batch(32)
-val_ds = val_ds.batch(32)
+# Compile the model with a categorical cross-entropy loss function and the Adam optimizer
+model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
+# Train the model for 10 epochs
+history = model.fit(X_train, y_train, epochs=100, batch_size=32, validation_data=(X_test, y_test))
 
-# Encode numerical and categorical features
-def encode_numerical_feature(feature, name, dataset):
-    normalizer = Normalization()
-    feature_ds = dataset.map(lambda x, y: x[name])
-    feature_ds = feature_ds.map(lambda x: tf.expand_dims(x, -1))
-    normalizer.adapt(feature_ds)
-    encoded_feature = normalizer(feature)
-    return encoded_feature
+# Evaluate the model on the test set
+test_loss, test_acc = model.evaluate(X_test, y_test)
 
-
-def encode_integer_categorical_feature(feature, name, dataset):
-    encoder = CategoryEncoding(num_tokens=5, output_mode="binary")
-    feature_ds = dataset.map(lambda x, y: x[name])
-    feature_ds = feature_ds.map(lambda x: tf.expand_dims(x, -1))
-    encoder.adapt(feature_ds)
-    encoded_feature = encoder(feature)
-    return encoded_feature
-
-
-# Integer categorical features
-DOC = keras.Input(shape=(1,), name="DOC", dtype="int64")
-feed = keras.Input(shape=(1,), name="feed", dtype="int64")
-material = keras.Input(shape=(1,), name="material", dtype="int64")
-
-# Continuous features
-smcDC = keras.Input(shape=(1,), name="smcDC")
-time = keras.Input(shape=(1,), name="time")
-vib_spindle = keras.Input(shape=(1,), name="vib_spindle")
-
-# Encode features
-DOC_encoded = encode_integer_categorical_feature(DOC, "DOC", train_ds)
-feed_encoded = encode_integer_categorical_feature(feed, "feed", train_ds)
-material_encoded = encode_integer_categorical_feature(material, "material", train_ds)
-smcDC_encoded = encode_numerical_feature(smcDC, "smcDC", train_ds)
-time_encoded = encode_numerical_feature(time, "time", train_ds)
-vib_spindle_encoded = encode_numerical_feature(vib_spindle, "vib_spindle", train_ds)
-
-# Concatenate encoded features
-features = layers.concatenate(
-    [DOC_encoded, feed_encoded, material_encoded, smcDC_encoded, time_encoded, vib_spindle_encoded])
-
-# Define model architecture
-x = layers.Dense(64, activation="relu")(features)
-x = layers.Dense(64, activation="relu")(x)
-predictions = layers.Dense(1, activation="sigmoid")(x)
-
-# Compile the model
-model = keras.Model(inputs=[DOC, feed, material, smcDC, time, vib_spindle], outputs=predictions)
-model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-
-# Train the model
-history = model.fit(train_ds, epochs=5, validation_data=val_ds)
-
-# Evaluate the model on the validation set
-val_loss, val_accuracy = model.evaluate(val_ds)
-print(f"Validation loss: {val_loss:.4f}, Validation accuracy: {val_accuracy:.4f}")
+# Print the test accuracy
+print('Test accuracy:', test_acc)
